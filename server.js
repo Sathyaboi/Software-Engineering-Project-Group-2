@@ -132,12 +132,37 @@ const server = http.createServer((req, res) => {
                             if (urlParts[1] && urlParts[2] === 'products') {
                                 resMsg = await handleAddProductToCart(req, userEmail, body);
                             } 
-
-                        default:
-                            break;
-                    }
+                            break; 
+            case 'add-review':
+                const reviewUserEmail = await getEmail(req); // Renamed variable to avoid conflict
+                if (reviewUserEmail instanceof Error || reviewUserEmail === -1) {
+                    resMsg = reviewUserEmail instanceof Error ? failed() : { code: 401, hdrs: { "Content-Type": "text/html" }, body: "Unauthorized: Please login to add a review." };
+                    res.writeHead(resMsg.code, resMsg.hdrs);
+                    res.end(resMsg.body);
+                } else {
+                    let bodyData = '';
+                    req.on('data', chunk => {
+                        bodyData += chunk.toString(); // Accumulate the data
+                    });
+                    req.on('end', async () => {
+                        try {
+                            const reviewData = JSON.parse(bodyData);
+                            resMsg = await addProductReview(req, reviewUserEmail, reviewData.productID, reviewData.reviewScore, reviewData.reviewText);
+                        } catch (error) {
+                            console.log(error);
+                            resMsg = failed(); // Handle parsing error or failure in adding review
+                        }
+                        res.writeHead(resMsg.code, resMsg.hdrs);
+                        res.end(resMsg.body);
+                    });
                 }
+                return; // Ensure the execution stops after handling 'add-review'
+            default:
+                // Handle other cases or default case
                 break;
+        }
+    }
+    break;
             case 'DELETE':
                 if (urlParts[0]) {
                     switch(urlParts[0]) {
@@ -605,7 +630,28 @@ async function productReviews(req, body, urlParts) {
         return {};
     }
 } 
+// Implementation for addReviewProduct function
+async function addProductReview(req, userEmail, productID, reviewScore, reviewText) {
+    // Validate input
+    if (reviewScore < 1 || reviewScore > 5 || reviewText.length === 0) {
+        return { code: 400, hdrs: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "Invalid review score or text." }) };
+    }
 
+    try {
+        // Insert the review into the database
+        await dBCon.promise().query(
+            'INSERT INTO ProductReviews (product_ID, userEmail, score, review) VALUES (?, ?, ?, ?)',
+            [productID, userEmail, reviewScore, reviewText]
+        );
+
+        // Respond with a success message
+        return { code: 200, hdrs: { "Content-Type": "application/json" }, body: JSON.stringify({ message: "Review added successfully." }) };
+    } catch (error) {
+        console.error('Error adding review:', error);
+        // Respond with an error message
+        return { code: 500, hdrs: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "Failed to add review." }) };
+    }
+}
 // Implementation for deleteReview function
 async function deleteReview(reviewID, userEmail) {
     try {
